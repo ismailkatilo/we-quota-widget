@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import ctypes
+import subprocess
 import base64
 import io
 import customtkinter as ctk
@@ -24,6 +25,9 @@ try:
     HAS_WINOTIFY = True
 except ImportError:
     HAS_WINOTIFY = False
+
+IS_WINDOWS = sys.platform.startswith("win")
+IS_MAC = sys.platform == "darwin"
 
 # ==========================================
 # CONFIGURATION
@@ -165,6 +169,30 @@ THEMES = {
 }
 
 def T(): return THEMES[config_data.get("theme", "dark")]
+
+def notify_user(title, message):
+    if HAS_WINOTIFY:
+        try:
+            toast = Notification(
+                app_id="WE Quota Widget",
+                title=title,
+                msg=message,
+                duration="long",
+            )
+            toast.set_audio(audio.Default, loop=False)
+            toast.show()
+            return
+        except Exception:
+            pass
+    if IS_MAC:
+        try:
+            def esc(text):
+                return text.replace("\\", "\\\\").replace('"', '\\"')
+
+            script = f'display notification "{esc(message)}" with title "{esc(title)}"'
+            subprocess.Popen(["osascript", "-e", script])
+        except Exception:
+            pass
 
 # ==========================================
 # CHROMEDRIVER
@@ -490,8 +518,15 @@ class QuotaWidget(ctk.CTk):
         y = config_data.get("window_y") or 20
         self.geometry(f"{w}x{h}+{x}+{y}")
         self.overrideredirect(True)
-        self.configure(fg_color="#000001")
-        self.attributes('-transparentcolor', "#000001", '-alpha', 1.0)
+        self._window_bg = "#000001" if IS_WINDOWS else T()["menu_bg"]
+        self.configure(fg_color=self._window_bg)
+        if IS_WINDOWS:
+            try:
+                self.attributes('-transparentcolor', "#000001", '-alpha', 1.0)
+            except Exception:
+                self.attributes('-alpha', 1.0)
+        else:
+            self.attributes('-alpha', 1.0)
         ctk.set_appearance_mode("Dark" if config_data.get("theme","dark") == "dark" else "Light")
 
         self._build_ui()
@@ -561,6 +596,8 @@ class QuotaWidget(ctk.CTk):
 
     def _rebuild_ui(self):
         ctk.set_appearance_mode("Dark" if config_data.get("theme","dark") == "dark" else "Light")
+        self._window_bg = "#000001" if IS_WINDOWS else T()["menu_bg"]
+        self.configure(fg_color=self._window_bg)
         self._build_ui()   # _build_ui already creates lbl_hover + schedules midnight
         if self._last_data:
             d = self._last_data
@@ -732,6 +769,8 @@ class QuotaWidget(ctk.CTk):
         self.start_auto_update()
 
     def _apply_window_style(self):
+        if not IS_WINDOWS:
+            return
         try:
             hwnd = ctypes.windll.user32.GetParent(self.winfo_id()) or self.winfo_id()
             s = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
@@ -751,19 +790,13 @@ class QuotaWidget(ctk.CTk):
 
     def _notify_and_solve_captcha(self, driver):
         """Toast + red button. Keep driver alive. User solves when ready."""
-        if HAS_WINOTIFY:
-            try:
-                def _toast():
-                    t = Notification(
-                        app_id="WE Quota Widget",
-                        title="WE Widget — Verification Needed",
-                        msg="Right-click on the widget and choose 'Solve CAPTCHA'.",
-                        duration="long",
-                    )
-                    t.set_audio(audio.Default, loop=False)
-                    t.show()
-                threading.Thread(target=_toast, daemon=True).start()
-            except: pass
+        threading.Thread(
+            target=lambda: notify_user(
+                "WE Widget — Verification Needed",
+                "Right-click on the widget and choose 'Solve CAPTCHA'."
+            ),
+            daemon=True,
+        ).start()
 
         for attempt in range(5):
             done = threading.Event()
