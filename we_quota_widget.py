@@ -89,29 +89,67 @@ def save_config():
 def save_cookies(driver):
     try:
         cookies = driver.get_cookies()
+        # Also grab localStorage tokens via JS
+        try:
+            local_storage = driver.execute_script(
+                "return JSON.stringify(localStorage);"
+            )
+        except:
+            local_storage = None
+        data = {"cookies": cookies, "localStorage": local_storage}
+        with open(COOKIES_FULL_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except: pass
+
+def save_cookies_legacy(driver):
+    """Old format — kept for compatibility."""
+    try:
+        cookies = driver.get_cookies()
         with open(COOKIES_FULL_PATH, "w", encoding="utf-8") as f:
             json.dump(cookies, f, indent=2)
     except: pass
 
 def load_cookies(driver):
-    """Load saved cookies into driver. Returns True if cookies were loaded."""
+    """Load saved cookies + localStorage into driver."""
     try:
         if not os.path.exists(COOKIES_FULL_PATH):
             return False
         with open(COOKIES_FULL_PATH, "r", encoding="utf-8") as f:
-            cookies = json.load(f)
+            data = json.load(f)
+        if not data:
+            return False
+
+        # Handle both formats: new {cookies, localStorage} or old [list]
+        if isinstance(data, list):
+            cookies = data
+            local_storage = None
+        else:
+            cookies = data.get("cookies", [])
+            local_storage = data.get("localStorage")
+
         if not cookies:
             return False
+
         for cookie in cookies:
-            # Only remove sameSite — keep expiry so session lasts longer
             cookie.pop("sameSite", None)
             try:
                 driver.add_cookie(cookie)
             except:
-                # If fails with expiry, try without it
                 cookie.pop("expiry", None)
                 try: driver.add_cookie(cookie)
                 except: pass
+
+        # Restore localStorage if available
+        if local_storage:
+            try:
+                driver.execute_script(f"""
+                    var data = {local_storage};
+                    for (var key in data) {{
+                        localStorage.setItem(key, data[key]);
+                    }}
+                """)
+            except: pass
+
         return True
     except: return False
 
@@ -187,6 +225,8 @@ def get_chrome_service_fresh():
 def make_driver(images=False, _retry=False):
     opts = Options()
     opts.add_argument("--headless=old")
+    opts.add_argument("--disable-web-security")
+    opts.add_argument("--allow-running-insecure-content")
     opts.add_argument("--window-size=1280,800")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-gpu")
@@ -715,7 +755,8 @@ class QuotaWidget(ctk.CTk):
         if self._ctx_menu:
             try: self._ctx_menu.destroy()
             except: pass
-        captcha_cb = self._open_captcha_window if self._captcha_btn_visible else None
+        # Thread-safe check: pending_captcha_done set = CAPTCHA needed
+        captcha_cb = self._open_captcha_window if self._pending_captcha_done is not None else None
         self._ctx_menu = ContextMenu(
             self, e.x_root, e.y_root,
             on_theme=self._toggle_theme,
@@ -772,22 +813,31 @@ class QuotaWidget(ctk.CTk):
             self._pending_captcha_driver = driver
             self._pending_captcha_done   = done
             self._pending_captcha_code   = None
-
             self.after(0, self._show_captcha_btn)
             self.after(0, lambda: self.lbl_days.configure(
                 text="⚠ CAPTCHA needed",
                 text_color=T()["text_warn"]
             ))
 
-            # Ping driver every 5s to keep alive — wait until done
+            # Ping driver every 5s — max 30 min then give up
+            waited = 0
             while not done.wait(timeout=5):
-                try:
-                    driver.execute_script("return 1;")
-                except:
+                waited += 5
+                if waited >= 1800:  # 30 min timeout
+                    self._captcha_btn_visible    = False
                     self.after(0, self._hide_captcha_btn)
                     self._pending_captcha_driver = None
                     self._pending_captcha_done   = None
                     return False
+                try:
+                    driver.execute_script("return 1;")
+                except:
+                    self._captcha_btn_visible    = False
+                    self.after(0, self._hide_captcha_btn)
+                    self._pending_captcha_driver = None
+                    self._pending_captcha_done   = None
+                    return False
+            self._captcha_btn_visible    = False
             self.after(0, self._hide_captcha_btn)
             code = self._pending_captcha_code
             self._pending_captcha_driver = None
