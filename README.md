@@ -1,6 +1,6 @@
 # WE Quota Widget
 
-A lightweight, background-running Windows widget to monitor your WE internet quota, built with Python and CustomTkinter. 
+A lightweight, background-running Windows desktop widget to monitor your WE internet quota, built with Python and PySide6/Qt6.
 
 <img width="411" height="179" alt="Screenshot 2026-06-03 081407" src="https://github.com/user-attachments/assets/b07ea520-a01b-4dda-98e3-a2a4832b270b" />
 
@@ -19,18 +19,26 @@ Follow these steps to compile the Python script into a standalone Windows execut
 2. **Install Inno Setup:** Download and install [Inno Setup](https://jrsoftware.org/isdl.php) (used for creating the final Windows installer).
 
 ### Step 1: Install Required Libraries
-Open your Command Prompt (CMD) or Terminal as Administrator and run the following command to install all necessary Python dependencies:
+Open your Command Prompt (CMD) or Terminal and run:
 
 ```bash
-pip install customtkinter pillow selenium webdriver-manager pystray pywin32 winotify pyinstaller
+pip install -r requirements.txt
 ```
+
+Or install manually:
+
+```bash
+pip install PySide6 pillow selenium webdriver-manager winotify pyinstaller
+```
+
 ### Step 2: Compile to .EXE
-Ensure that we_widget.py, app_icon.ico, and tray_icon.ico are all in the same folder. Run this PyInstaller command to compile the script into a single executable file:
+Ensure that `we_quota_widget.py`, `app_icon.ico`, and `tray_icon.ico` are all in the same folder. Run this PyInstaller command:
 
 ```bash
-pyinstaller --noconsole --onefile --icon=app_icon.ico --add-data "app_icon.ico;." --add-data "tray_icon.ico;." --hidden-import="selenium.webdriver.chrome.webdriver" --hidden-import="selenium.webdriver.chrome.options" --hidden-import="selenium.webdriver.chrome.service" we_widget.py
+pyinstaller --noconsole --onefile --icon=app_icon.ico --add-data "app_icon.ico;." --add-data "tray_icon.ico;." --hidden-import="PySide6.QtWidgets" --hidden-import="PySide6.QtCore" --hidden-import="PySide6.QtGui" --hidden-import="selenium.webdriver.chrome.webdriver" --hidden-import="selenium.webdriver.chrome.options" --hidden-import="selenium.webdriver.chrome.service" we_quota_widget.py
 ```
-Once finished, you will find your standalone we_widget.exe inside the newly created dist folder.
+
+Once finished, you will find your standalone `we_quota_widget.exe` inside the newly created `dist` folder.
 
 ### Step 3: Create the Windows Installer
 1. Move the generated we_widget.exe from the dist folder back to the main project folder.

@@ -30,7 +30,7 @@ Name: "desktopicon";     Description: "Create a desktop shortcut";              
 
 [Files]
 ; Pointing to the default PyInstaller output and renaming it to match MyAppExeName
-Source: "dist\we_widget.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
+Source: "dist\we_quota_widget.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
 Source: "app_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
