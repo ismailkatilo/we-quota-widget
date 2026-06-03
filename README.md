@@ -4,6 +4,7 @@ A lightweight, background-running Windows widget to monitor your WE internet quo
 
 <img width="411" height="179" alt="Screenshot 2026-06-03 081407" src="https://github.com/user-attachments/assets/b07ea520-a01b-4dda-98e3-a2a4832b270b" />
 
+
 **Feel free to fork this project, modify the widget, or add new features! The source code is open for anyone to use, edit, and improve.**
 
 ---
