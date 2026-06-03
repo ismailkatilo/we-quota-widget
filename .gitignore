@@ -1,0 +1,25 @@
+# PyInstaller
+*.spec
+*.exe
+build/
+dist/
+
+# App runtime files
+config.json
+cookies.json
+error_log.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
