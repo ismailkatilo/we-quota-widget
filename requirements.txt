@@ -1,0 +1,6 @@
+PySide6
+pillow
+selenium
+webdriver-manager
+winotify
+pyinstaller
