@@ -33,7 +33,7 @@ except ImportError:
 # ==========================================
 # CONFIGURATION & PATHS
 # ==========================================
-APP_VERSION = "0.9.6-beta"
+APP_VERSION = "0.9.7-beta.2"
 CONFIG_FILENAME  = "config.json"
 COOKIES_FILENAME = "cookies.json"
 
@@ -190,7 +190,7 @@ def T(): return THEMES[config_data.get("theme", "dark")]
 # ==========================================
 def make_driver(images=False):
     opts = Options()
-    opts.add_argument("--headless") 
+    opts.add_argument("--headless=new") 
     opts.add_argument("--disable-web-security")
     opts.add_argument("--allow-running-insecure-content")
     opts.add_argument("--disable-features=IsolateOrigins,site-per-process")
@@ -200,7 +200,11 @@ def make_driver(images=False):
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-gpu")
     opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-software-rasterizer")
+    opts.add_argument("--disable-extensions")
     opts.add_experimental_option("excludeSwitches", ["enable-logging"])
+    opts.set_capability("unhandledPromptBehavior", "accept")
+    
     if not images:
         opts.add_argument("--blink-settings=imagesEnabled=false")
     opts.add_argument("--log-level=3")
@@ -222,6 +226,8 @@ def make_driver(images=False):
     try:
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": """
             Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            window.alert = function(msg) { console.log('Suppressed Alert: ' + msg); };
+            window.confirm = function(msg) { return true; };
         """})
     except: pass
     return driver
@@ -255,8 +261,8 @@ class HelpWindow(ctk.CTkToplevel):
         info_text = (
             "1. The widget runs silently in the background.\n"
             "2. It automatically updates based on your interval.\n"
-            "3. If WE portal requires a CAPTCHA, you'll be notified.\n"
-            "4. Right-click the system tray icon to solve CAPTCHA.\n"
+            "3. If WE portal requires a CAPTCHA, it will pop up.\n"
+            "4. You can also manually trigger it via Tray Icon.\n"
             "5. Drag the widget (click the text) anytime to move it.\n"
         )
         
@@ -430,7 +436,7 @@ class QuotaWidget(ctk.CTk):
         sw = self.winfo_screenwidth()
         sh = self.winfo_screenheight()
         
-        if x is None or y is None or x < 0 or y < 0 or x > sw - 50 or y > sh - 50:
+        if x is None or y is None:
             x = (sw // 2) - (self.w // 2)
             y = (sh // 2) - (self.h // 2)
             config_data["window_x"] = x
@@ -461,7 +467,6 @@ class QuotaWidget(ctk.CTk):
         self.tray_icon = None
         self.setup_system_tray()
 
-        # Dual-Protection Against 'Show Desktop' (Win+D)
         self.bind("<Unmap>", self._anti_hide)
         self._desktop_watchdog()
 
@@ -533,6 +538,7 @@ class QuotaWidget(ctk.CTk):
             item('Settings', self._tray_settings),
             item('Change Size', size_menu),
             item('Switch Theme', theme_menu),
+            item('Reset Position', lambda icon, itm: self.cmd_queue.put(self._reset_position)),
             pystray.Menu.SEPARATOR,
             item('Solve CAPTCHA', self._tray_captcha, enabled=lambda item: self._captcha_btn_visible),
             pystray.Menu.SEPARATOR,
@@ -543,6 +549,16 @@ class QuotaWidget(ctk.CTk):
         )
         self.tray_icon = pystray.Icon("WE_Widget", tray_img, "WE Quota Widget", menu)
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
+
+    def _reset_position(self):
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        x = (sw // 2) - (self.w // 2)
+        y = (sh // 2) - (self.h // 2)
+        self.geometry(f"+{x}+{y}")
+        config_data["window_x"] = x
+        config_data["window_y"] = y
+        threading.Thread(target=save_config, daemon=True).start()
 
     def _set_size(self, size_str):
         if config_data.get("widget_size", "small") == size_str: return
@@ -585,12 +601,15 @@ class QuotaWidget(ctk.CTk):
         self._drag_y = e.y_root - self.winfo_y()
 
     def _on_drag(self, e):
-        self.geometry(f"+{e.x_root - self._drag_x}+{e.y_root - self._drag_y}")
+        self._current_x = e.x_root - self._drag_x
+        self._current_y = e.y_root - self._drag_y
+        self.geometry(f"+{self._current_x}+{self._current_y}")
 
     def _on_release(self, e):
-        config_data["window_x"] = self.winfo_x()
-        config_data["window_y"] = self.winfo_y()
-        threading.Thread(target=save_config, daemon=True).start()
+        if hasattr(self, '_current_x'):
+            config_data["window_x"] = self._current_x
+            config_data["window_y"] = self._current_y
+            save_config()
 
     def _bind_drag_recursive(self, widget):
         widget.bind("<ButtonPress-1>", self._on_press)
@@ -635,7 +654,9 @@ class QuotaWidget(ctk.CTk):
         sz = SIZES.get(config_data.get("widget_size", "small"), SIZES["small"])
         self.w = sz["w"]
         self.h = sz["h"]
-        self.geometry(f"{self.w}x{self.h}")
+        x = config_data.get("window_x", 100)
+        y = config_data.get("window_y", 100)
+        self.geometry(f"{self.w}x{self.h}+{x}+{y}")
         ctk.set_appearance_mode("Dark" if config_data.get("theme","dark") == "dark" else "Light")
         self._build_ui()
         if self._last_data:
@@ -656,15 +677,10 @@ class QuotaWidget(ctk.CTk):
         ))
 
     def _on_setup_done(self):
-        sw = self.winfo_screenwidth()
-        sh = self.winfo_screenheight()
-        x = (sw // 2) - (self.w // 2)
-        y = (sh // 2) - (self.h // 2)
+        x = config_data.get("window_x", 100)
+        y = config_data.get("window_y", 100)
         self.geometry(f"{self.w}x{self.h}+{x}+{y}")
-        config_data["window_x"] = x
-        config_data["window_y"] = y
-        save_config()
-
+        
         self.deiconify()
         self.lift()
         self.after(200, self._apply_desktop_style)
@@ -681,14 +697,11 @@ class QuotaWidget(ctk.CTk):
         try:
             hwnd = ctypes.windll.user32.GetParent(self.winfo_id()) or self.winfo_id()
             
-            # Hide from Taskbar and Alt+Tab
             ex_style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
             ctypes.windll.user32.SetWindowLongW(hwnd, -20, ex_style | 0x00000080)
             
-            # Find Desktop window (Progman)
             desktop_hwnd = ctypes.windll.user32.FindWindowW("Progman", None)
             
-            # In Windows 11, Desktop is sometimes inside WorkerW
             workerw = [0]
             def enum_windows_callback(w_hwnd, lParam):
                 if ctypes.windll.user32.FindWindowExW(w_hwnd, 0, "SHELLDLL_DefView", None):
@@ -701,14 +714,13 @@ class QuotaWidget(ctk.CTk):
             if workerw[0]:
                 desktop_hwnd = workerw[0]
                 
-            # Bind widget to Desktop as Owner
             if desktop_hwnd:
                 try:
                     set_owner = ctypes.windll.user32.SetWindowLongPtrW
                 except AttributeError:
                     set_owner = ctypes.windll.user32.SetWindowLongW
                 
-                set_owner(hwnd, -8, desktop_hwnd) # GWLP_HWNDPARENT = -8 
+                set_owner(hwnd, -8, desktop_hwnd)
                 
         except Exception:
             pass
@@ -773,7 +785,9 @@ class QuotaWidget(ctk.CTk):
             self._pending_captcha_driver = driver
             self._pending_captcha_done   = done
             self._pending_captcha_code   = None
+            
             self.cmd_queue.put(self._show_captcha_btn)
+            self.cmd_queue.put(self._open_captcha_window)
 
             waited = 0
             while not done.wait(timeout=5):
