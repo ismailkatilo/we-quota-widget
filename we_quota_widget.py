@@ -33,7 +33,7 @@ except ImportError:
 # ==========================================
 # CONFIGURATION & PATHS
 # ==========================================
-APP_VERSION = "0.9.7-beta.2"
+APP_VERSION = "0.9.7-beta.3"
 CONFIG_FILENAME  = "config.json"
 COOKIES_FILENAME = "cookies.json"
 
@@ -261,8 +261,8 @@ class HelpWindow(ctk.CTkToplevel):
         info_text = (
             "1. The widget runs silently in the background.\n"
             "2. It automatically updates based on your interval.\n"
-            "3. If WE portal requires a CAPTCHA, it will pop up.\n"
-            "4. You can also manually trigger it via Tray Icon.\n"
+            "3. If WE portal requires a CAPTCHA, you'll be notified.\n"
+            "4. Right-click the system tray icon to solve CAPTCHA.\n"
             "5. Drag the widget (click the text) anytime to move it.\n"
         )
         
@@ -787,7 +787,6 @@ class QuotaWidget(ctk.CTk):
             self._pending_captcha_code   = None
             
             self.cmd_queue.put(self._show_captcha_btn)
-            self.cmd_queue.put(self._open_captcha_window)
 
             waited = 0
             while not done.wait(timeout=5):
@@ -843,14 +842,16 @@ class QuotaWidget(ctk.CTk):
     def run_scraper(self):
         driver  = None
         success = False
+        is_no_internet = False
         try:
             driver = make_driver(images=True)
-            wait   = WebDriverWait(driver, 15)
+            wait   = WebDriverWait(driver, 30) 
+            
             driver.get("https://my.te.eg/echannel/#/login")
             cookies_loaded = load_cookies(driver)
             if cookies_loaded:
                 driver.refresh()
-                time.sleep(2)
+                time.sleep(3)
                 
             try:
                 driver.find_element(By.XPATH, "//span[contains(@style,'font-size: 2.1875rem')]")
@@ -860,14 +861,22 @@ class QuotaWidget(ctk.CTk):
 
             if not already_in:
                 driver.get("https://my.te.eg/echannel/#/login")
+                time.sleep(2)
 
                 try:
-                    svc_input = wait.until(EC.visibility_of_element_located((By.ID, "login_loginid_input_01")))
+                    svc_input = wait.until(EC.visibility_of_element_located(
+                        (By.XPATH, "//input[@id='login_loginid_input_01' or @formcontrolname='msisdn']")
+                    ))
+                    svc_input.clear()
                     svc_input.send_keys(config_data["service_number"] + Keys.TAB)
-                    time.sleep(0.2)
+                    time.sleep(0.5)
                     driver.switch_to.active_element.send_keys("Internet" + Keys.ENTER)
-                    driver.find_element(By.ID, "login_password_input_01").send_keys(decode_pw(config_data["password"]) + Keys.ENTER)
-                    time.sleep(2)
+                    time.sleep(0.5)
+                    
+                    pwd_input = driver.find_element(By.XPATH, "//input[@type='password']")
+                    pwd_input.clear()
+                    pwd_input.send_keys(decode_pw(config_data["password"]) + Keys.ENTER)
+                    time.sleep(3)
 
                     try:
                         body = driver.find_element(By.TAG_NAME, "body").text
@@ -881,7 +890,7 @@ class QuotaWidget(ctk.CTk):
                         if "RATE_LIMITED" in str(_chk) or "WRONG_PASSWORD" in str(_chk):
                             raise
 
-                except Exception:
+                except Exception as e:
                     pass
 
                 try:
@@ -894,21 +903,28 @@ class QuotaWidget(ctk.CTk):
                     self._captcha_driver = driver
                     solved = self._notify_and_solve_captcha(driver)
                     driver = getattr(self, "_captcha_driver", driver)
-                    wait   = WebDriverWait(driver, 20)
+                    wait   = WebDriverWait(driver, 30) 
+                    
                     if not solved:
                         clear_cookies()
                         raise Exception("CAPTCHA not solved")
-                    time.sleep(3)
+                    time.sleep(4) 
                     
                     try:
                         wait.until(EC.visibility_of_element_located((By.XPATH, "//span[contains(@style,'font-size: 2.1875rem')]")))
                     except:
                         driver.get("https://my.te.eg/echannel/#/login")
-                        wait.until(EC.visibility_of_element_located((By.ID, "login_loginid_input_01"))).send_keys(config_data["service_number"] + Keys.TAB)
-                        time.sleep(0.2)
+                        time.sleep(2)
+                        svc_input = wait.until(EC.visibility_of_element_located((By.XPATH, "//input[@id='login_loginid_input_01' or @formcontrolname='msisdn']")))
+                        svc_input.clear()
+                        svc_input.send_keys(config_data["service_number"] + Keys.TAB)
+                        time.sleep(0.5)
                         driver.switch_to.active_element.send_keys("Internet" + Keys.ENTER)
-                        driver.find_element(By.ID, "login_password_input_01").send_keys(decode_pw(config_data["password"]) + Keys.ENTER)
-                        time.sleep(3)
+                        time.sleep(0.5)
+                        pwd_input = driver.find_element(By.XPATH, "//input[@type='password']")
+                        pwd_input.clear()
+                        pwd_input.send_keys(decode_pw(config_data["password"]) + Keys.ENTER)
+                        time.sleep(4)
                         
                 save_cookies(driver)
 
@@ -953,11 +969,13 @@ class QuotaWidget(ctk.CTk):
 
         except Exception as e:
             err_str = str(e)
-            tb_str = traceback.format_exc()
-            with open(os.path.join(config_path, "error_log.txt"), "a", encoding="utf-8") as f:
-                f.write(f"\n--- {datetime.now()} ---\n{tb_str}\n")
-                
-            if "RATE_LIMITED" not in err_str and "WRONG_PASSWORD" not in err_str and "CAPTCHA not solved" not in err_str:
+            if "ERR_INTERNET_DISCONNECTED" in err_str or "ERR_NAME_NOT_RESOLVED" in err_str:
+                is_no_internet = True
+                self.cmd_queue.put(lambda: self.lbl_days.configure(text="No Internet", text_color=T()["text_err"]))
+            elif "RATE_LIMITED" not in err_str and "WRONG_PASSWORD" not in err_str and "CAPTCHA not solved" not in err_str:
+                tb_str = traceback.format_exc()
+                with open(os.path.join(config_path, "error_log.txt"), "a", encoding="utf-8") as f:
+                    f.write(f"\n--- {datetime.now()} ---\n{tb_str}\n")
                 self.cmd_queue.put(lambda: self.lbl_days.configure(text="Err: check error_log.txt", text_color=T()["text_err"]))
         finally:
             active_driver = getattr(self, "_captcha_driver", None) or driver
@@ -976,7 +994,10 @@ class QuotaWidget(ctk.CTk):
                 interval_ms = minutes * 60 * 1000
                 self._update_job = self.after(interval_ms, self.start_auto_update)
             else:
-                self._update_job = self.after(300000, self.trigger_update) 
+                if is_no_internet:
+                    self._update_job = self.after(600000, self.trigger_update) 
+                else:
+                    self._update_job = self.after(300000, self.trigger_update) 
 
     def update_ui_safe(self, current, total, days):
         self._last_data = {"current": current, "total": total, "days": days}
