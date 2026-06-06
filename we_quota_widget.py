@@ -11,6 +11,11 @@ import queue
 import traceback
 import webbrowser
 import customtkinter as ctk
+
+# Force 100% scaling to prevent UI breakage on 125%/150% Windows scaling
+ctk.set_window_scaling(1.0)
+ctk.set_widget_scaling(1.0)
+
 from PIL import Image
 from datetime import datetime, timedelta
 from selenium import webdriver
@@ -33,7 +38,7 @@ except ImportError:
 # ==========================================
 # CONFIGURATION & PATHS
 # ==========================================
-APP_VERSION = "0.9.7-beta.3"
+APP_VERSION = "0.9.7-beta.4"
 CONFIG_FILENAME  = "config.json"
 COOKIES_FILENAME = "cookies.json"
 
@@ -355,7 +360,7 @@ class CaptchaWindow(ctk.CTkToplevel):
         has_img = captcha_image is not None
         win_h   = 310 if has_img else 220
         self.geometry(f"400x{win_h}+{sw//2-200}+{sh//2-(win_h//2)}")
-        self.resizable(False, False)
+        self.resizable(True, True) 
         self.attributes('-topmost', True)
         self.configure(fg_color="#1C1C1E")
 
@@ -382,6 +387,9 @@ class CaptchaWindow(ctk.CTkToplevel):
         self.entry.pack(pady=10)
         self.entry.bind("<Return>", lambda e: self._submit())
         ctk.CTkButton(self, text="Submit", width=180, height=38, command=self._submit).pack(pady=10)
+        
+        # Focus entry automatically
+        self.after(100, self.entry.focus)
 
     def _submit(self):
         code = self.entry.get().strip()
@@ -787,6 +795,11 @@ class QuotaWidget(ctk.CTk):
             self._pending_captcha_code   = None
             
             self.cmd_queue.put(self._show_captcha_btn)
+            
+            # Smart Auto-Popup logic for expired CAPTCHAs
+            # If attempt > 0, it means the user submitted an expired code and is actively trying to solve it.
+            if attempt > 0:
+                self.cmd_queue.put(self._open_captcha_window)
 
             waited = 0
             while not done.wait(timeout=5):
