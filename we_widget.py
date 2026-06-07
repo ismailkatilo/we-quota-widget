@@ -38,7 +38,7 @@ except ImportError:
 # ==========================================
 # CONFIGURATION & PATHS
 # ==========================================
-APP_VERSION = "0.9.7-beta.4"
+APP_VERSION = "0.9.7-beta.5"
 CONFIG_FILENAME  = "config.json"
 COOKIES_FILENAME = "cookies.json"
 
