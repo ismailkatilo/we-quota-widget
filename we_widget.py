@@ -9,7 +9,6 @@ import base64
 import io
 import queue
 import traceback
-import webbrowser
 import customtkinter as ctk
 
 # Force 100% scaling to prevent UI breakage on 125%/150% Windows scaling
@@ -38,7 +37,7 @@ except ImportError:
 # ==========================================
 # CONFIGURATION & PATHS
 # ==========================================
-APP_VERSION = "0.9.7-beta.5"
+APP_VERSION = "0.9.7-beta.10"
 CONFIG_FILENAME  = "config.json"
 COOKIES_FILENAME = "cookies.json"
 
@@ -59,6 +58,15 @@ else:
 CONFIG_FULL_PATH  = os.path.join(config_path, CONFIG_FILENAME)
 COOKIES_FULL_PATH = os.path.join(config_path, COOKIES_FILENAME)
 
+# Global Crash Handler
+def global_exception_handler(exctype, value, tb):
+    try:
+        with open(os.path.join(config_path, "crash_log.txt"), "a", encoding="utf-8") as f:
+            f.write(f"\n--- UI Crash at {datetime.now()} ---\n")
+            traceback.print_exception(exctype, value, tb, file=f)
+    except: pass
+sys.excepthook = global_exception_handler
+
 default_config = {
     "service_number": "",
     "password": "",
@@ -69,7 +77,12 @@ default_config = {
     "theme": "dark",
     "widget_size": "small",
     "alert_dismissed_cycle": "",
-    "update_interval_minutes": 60
+    "update_interval_minutes": 60,
+    "last_run_date": "",
+    "last_current": 0.0,
+    "last_total": 0.0,
+    "last_days": "--",
+    "last_update_time": ""
 }
 
 config_data = default_config.copy()
@@ -207,7 +220,12 @@ def make_driver(images=False):
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-software-rasterizer")
     opts.add_argument("--disable-extensions")
-    opts.add_experimental_option("excludeSwitches", ["enable-logging"])
+    
+    opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+    opts.add_argument("--disable-blink-features=AutomationControlled")
+    opts.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+    opts.add_experimental_option('useAutomationExtension', False)
+    
     opts.set_capability("unhandledPromptBehavior", "accept")
     
     if not images:
@@ -255,40 +273,35 @@ class HelpWindow(ctk.CTkToplevel):
         super().__init__(parent)
         self.title("How it works")
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        self.geometry(f"360x370+{sw//2-180}+{sh//2-185}")
+        self.geometry(f"380x360+{int(sw//2-190)}+{int(sh//2-180)}")
         self.resizable(False, False)
         self.attributes('-topmost', True)
         self.configure(fg_color="#1C1C1E")
 
-        ctk.CTkLabel(self, text="How WE Widget Works", font=("Segoe UI", 16, "bold"), text_color="#3498DB").pack(pady=(15, 2))
+        ctk.CTkLabel(self, text="How it works", font=("Segoe UI", 16, "bold"), text_color="#3498DB").pack(pady=(15, 2))
         ctk.CTkLabel(self, text=f"Version: {APP_VERSION}", font=("Segoe UI", 10), text_color="#888888").pack(pady=(0, 10))
         
         info_text = (
-            "1. The widget runs silently in the background.\n"
-            "2. It automatically updates based on your interval.\n"
-            "3. If WE portal requires a CAPTCHA, you'll be notified.\n"
-            "4. Right-click the system tray icon to solve CAPTCHA.\n"
-            "5. Drag the widget (click the text) anytime to move it.\n"
+            "1. The widget updates silently in the background.\n"
+            "2. Drag the widget (click the text) anytime to move it.\n"
+            "3. Right-click the tray icon to change Size & Theme.\n\n"
+            "⚠️ STUCK WIDGET?\n"
+            "If the widget hasn't updated its data for a long time,\n"
+            "right-click the tray icon and select 'Fix Sync'.\n"
+            "This will clear old sessions and prompt a fresh Login."
         )
-        
         ctk.CTkLabel(self, text=info_text, font=("Segoe UI", 12), text_color="#DDDDDD", justify="left").pack(padx=20, pady=5, anchor="w")
 
-        ctk.CTkLabel(self, text="Check for updates or report issues on GitHub:", font=("Segoe UI", 11, "bold"), text_color="#F1C40F").pack(pady=(10, 2))
-        ctk.CTkButton(self, text="Open GitHub", fg_color="#2C2C2E", hover_color="#3498DB", text_color="#FFFFFF", font=("Segoe UI", 12, "bold"),
-                      command=lambda: webbrowser.open("https://github.com/ismailkatilo/we-quota-widget")).pack(pady=(0, 15))
-
-        ctk.CTkButton(self, text="Close", width=120, command=self.destroy).pack(pady=5)
+        ctk.CTkButton(self, text="Close", width=120, command=self.destroy).pack(pady=15)
 
 class SetupWindow(ctk.CTkToplevel):
     def __init__(self, parent, on_save, first_setup=False):
         super().__init__(parent)
-        self.on_save     = on_save
+        self.on_save = on_save
         self.first_setup = first_setup
-        self.title("WE Widget - Settings")
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        
         h = 350
-        self.geometry(f"340x{h}+{sw//2-170}+{sh//2-h//2}")
+        self.geometry(f"340x{h}+{int(sw//2-170)}+{int(sh//2-h//2)}")
         self.resizable(False, False)
         self.attributes('-topmost', True)
         self.configure(fg_color="#1C1C1E")
@@ -297,18 +310,26 @@ class SetupWindow(ctk.CTkToplevel):
         if os.path.exists(app_icon_path):
             try: self.iconbitmap(app_icon_path)
             except: pass
+            
+        self._init_ui()
+
+    def _init_ui(self):
+        num_val = config_data.get("service_number", "")
+        pwd_val = decode_pw(config_data.get("password", ""))
+        
+        self.title("WE Widget - Settings")
 
         ctk.CTkLabel(self, text="WE Quota Widget", font=("Segoe UI", 17, "bold"), text_color="#3498DB").pack(pady=(20, 15))
         
         self.e_num = ctk.CTkEntry(self, placeholder_text="Service Number", width=270, height=36, corner_radius=8)
-        self.e_num.pack(pady=(0, 15))
-        if config_data["service_number"]: self.e_num.insert(0, config_data["service_number"])
+        self.e_num.pack(pady=(0, 10))
+        if num_val: self.e_num.insert(0, num_val)
 
         self.e_pwd = ctk.CTkEntry(self, placeholder_text="Password", width=270, height=36, corner_radius=8, show="*")
         self.e_pwd.pack(pady=(0, 15))
-        if config_data["password"]: self.e_pwd.insert(0, decode_pw(config_data["password"]))
+        if pwd_val: self.e_pwd.insert(0, pwd_val)
 
-        if first_setup:
+        if self.first_setup:
             self._pwd_visible = False
             self.btn_eye = ctk.CTkButton(self.e_pwd, text="👁", width=30, height=26, fg_color="transparent", 
                                          hover_color="#2C2C2E", text_color="#888888", font=("Segoe UI", 14), 
@@ -318,7 +339,11 @@ class SetupWindow(ctk.CTkToplevel):
         ctk.CTkLabel(self, text="Update Interval", font=("Segoe UI", 13, "bold"), text_color="#DDDDDD").pack(pady=(0, 2))
         ctk.CTkLabel(self, text="Set how often the widget checks for new data.", font=("Segoe UI", 10), text_color="#888888").pack(pady=(0, 10))
 
-        self._interval_options = [("Every 10 minutes", 10), ("Every 30 minutes", 30), ("Every 1 hour", 60), ("Every 2 hours", 120), ("Every 4 hours", 240), ("Every 6 hours", 360)]
+        intervals = [
+            ("Every 10 minutes", 10), ("Every 30 minutes", 30), ("Every 1 hour", 60), 
+            ("Every 2 hours", 120), ("Every 4 hours", 240), ("Every 6 hours", 360)
+        ]
+        self._interval_options = intervals
         current_min = config_data.get("update_interval_minutes", 60)
         cur_label   = next((o[0] for o in self._interval_options if o[1] == current_min), "Every 1 hour")
         self._interval_menu = ctk.CTkOptionMenu(self, values=[o[0] for o in self._interval_options], width=270, height=36)
@@ -328,7 +353,8 @@ class SetupWindow(ctk.CTkToplevel):
         self.lbl_err = ctk.CTkLabel(self, text="", text_color="#E74C3C", font=("Segoe UI", 11))
         self.lbl_err.pack()
         
-        ctk.CTkButton(self, text="Save & Start", width=270, height=38, font=("Segoe UI", 13, "bold"), command=self._save).pack(pady=(0, 10))
+        btn_text = "Save & Start" if self.first_setup else "Save"
+        ctk.CTkButton(self, text=btn_text, width=270, height=38, font=("Segoe UI", 13, "bold"), command=self._save).pack(pady=(0, 10))
 
     def _toggle_pwd(self):
         if not hasattr(self, '_pwd_visible'): return
@@ -339,16 +365,33 @@ class SetupWindow(ctk.CTkToplevel):
     def _save(self):
         num = self.e_num.get().strip()
         pwd = self.e_pwd.get().strip()
+        
         if not num or not pwd: return
+        
+        enc_pwd = encode_pw(pwd)
+        old_num = config_data.get("service_number", "")
+        old_pwd = config_data.get("password", "")
+        
+        credentials_changed = (num != old_num) or (enc_pwd != old_pwd)
+
         config_data["service_number"] = num
-        config_data["password"] = encode_pw(pwd)
+        config_data["password"] = enc_pwd
         selected = self._interval_menu.get()
         minutes  = next((o[1] for o in self._interval_options if o[0] == selected), 60)
         config_data["update_interval_minutes"] = minutes
-        clear_cookies()
+        
+        if credentials_changed:
+            config_data["last_run_date"] = ""
+            clear_cookies()
+            
         save_config()
         self.destroy()
-        self.on_save()
+        
+        if hasattr(self, 'on_save') and self.on_save:
+            try:
+                self.on_save(credentials_changed)
+            except TypeError:
+                self.on_save()
 
 class CaptchaWindow(ctk.CTkToplevel):
     def __init__(self, parent, captcha_image, on_submit, on_refresh=None):
@@ -359,7 +402,7 @@ class CaptchaWindow(ctk.CTkToplevel):
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         has_img = captcha_image is not None
         win_h   = 310 if has_img else 220
-        self.geometry(f"400x{win_h}+{sw//2-200}+{sh//2-(win_h//2)}")
+        self.geometry(f"400x{win_h}+{int(sw//2-200)}+{int(sh//2-(win_h//2))}")
         self.resizable(True, True) 
         self.attributes('-topmost', True)
         self.configure(fg_color="#1C1C1E")
@@ -388,7 +431,6 @@ class CaptchaWindow(ctk.CTkToplevel):
         self.entry.bind("<Return>", lambda e: self._submit())
         ctk.CTkButton(self, text="Submit", width=180, height=38, command=self._submit).pack(pady=10)
         
-        # Focus entry automatically
         self.after(100, self.entry.focus)
 
     def _submit(self):
@@ -406,7 +448,7 @@ class AlertWindow(ctk.CTkToplevel):
         super().__init__(parent)
         self.on_ok = on_ok
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        self.geometry(f"300x185+{sw//2-150}+{sh//2-92}")
+        self.geometry(f"300x185+{int(sw//2-150)}+{int(sh//2-92)}")
         self.overrideredirect(True)
         self.attributes('-topmost', True)
         self.configure(fg_color="#1C1C1E")
@@ -417,7 +459,7 @@ class AlertWindow(ctk.CTkToplevel):
         ctk.CTkButton(card, text="OK, Got it", width=120, height=34, command=self._ok).pack(pady=(14, 14))
 
     def _ok(self):
-        self.on_ok()
+        if self.on_ok: self.on_ok()
         self.destroy()
 
 
@@ -434,6 +476,7 @@ class QuotaWidget(ctk.CTk):
         self.is_updating   = False
         self._update_job   = None
         self._last_data    = None
+        self._failed_attempts = 0  
 
         sz = SIZES.get(config_data.get("widget_size", "small"), SIZES["small"])
         self.w = sz["w"]
@@ -451,7 +494,14 @@ class QuotaWidget(ctk.CTk):
             config_data["window_y"] = y
             save_config()
 
-        self.geometry(f"{self.w}x{self.h}+{x}+{y}")
+        try:
+            safe_x = int(float(x))
+            safe_y = int(float(y))
+        except:
+            safe_x = (sw // 2) - (self.w // 2)
+            safe_y = (sh // 2) - (self.h // 2)
+
+        self.geometry(f"{self.w}x{self.h}+{safe_x}+{safe_y}")
         self.overrideredirect(True)
         self.configure(fg_color="#000001") 
         self.attributes('-transparentcolor', "#000001", '-alpha', 1.0)
@@ -468,7 +518,6 @@ class QuotaWidget(ctk.CTk):
         self._build_ui()
         self._apply_desktop_style()
 
-        self._captcha_btn_visible    = False
         self._pending_captcha_driver = None
         self._pending_captcha_done   = None
         self._pending_captcha_code   = None
@@ -524,9 +573,9 @@ class QuotaWidget(ctk.CTk):
             return lambda itm: config_data.get("widget_size", "small") == size_str
 
         size_menu = pystray.Menu(
-            item('Small (Default)', _make_size_cb('small'), checked=_is_size_checked('small'), radio=True),
-            item('Medium', _make_size_cb('medium'), checked=_is_size_checked('medium'), radio=True),
-            item('Large', _make_size_cb('large'), checked=_is_size_checked('large'), radio=True)
+            item("Small (Default)", _make_size_cb('small'), checked=_is_size_checked('small'), radio=True),
+            item("Medium", _make_size_cb('medium'), checked=_is_size_checked('medium'), radio=True),
+            item("Large", _make_size_cb('large'), checked=_is_size_checked('large'), radio=True)
         )
 
         def _make_theme_cb(theme_str):
@@ -536,27 +585,32 @@ class QuotaWidget(ctk.CTk):
             return lambda itm: config_data.get("theme", "dark") == theme_str
 
         theme_menu = pystray.Menu(
-            item('Dark Mode', _make_theme_cb('dark'), checked=_is_theme_checked('dark'), radio=True),
-            item('Light Mode', _make_theme_cb('light'), checked=_is_theme_checked('light'), radio=True)
+            item("Dark Mode", _make_theme_cb('dark'), checked=_is_theme_checked('dark'), radio=True),
+            item("Light Mode", _make_theme_cb('light'), checked=_is_theme_checked('light'), radio=True)
         )
 
         menu = pystray.Menu(
-            item('Update Now', self._tray_update_now),
+            item("Update Now", self._tray_update_now),
+            item("⚠️ Fix Sync (Force Login)", self._tray_force_verify),
             pystray.Menu.SEPARATOR,
-            item('Settings', self._tray_settings),
-            item('Change Size', size_menu),
-            item('Switch Theme', theme_menu),
-            item('Reset Position', lambda icon, itm: self.cmd_queue.put(self._reset_position)),
+            item("Settings", self._tray_settings),
+            item("Change Size", size_menu),
+            item("Switch Theme", theme_menu),
+            item("Reset Position", lambda icon, itm: self.cmd_queue.put(self._reset_position)),
             pystray.Menu.SEPARATOR,
-            item('Solve CAPTCHA', self._tray_captcha, enabled=lambda item: self._captcha_btn_visible),
+            item("Clear Cache & Cookies", self._tray_clear_cookies),
+            item("Help / How it works", self._tray_help),
             pystray.Menu.SEPARATOR,
-            item('Clear Cache & Cookies', self._tray_clear_cookies),
-            item('Help / How it works', self._tray_help),
-            pystray.Menu.SEPARATOR,
-            item('Exit', self._tray_exit)
+            item("Exit", self._tray_exit)
         )
         self.tray_icon = pystray.Icon("WE_Widget", tray_img, "WE Quota Widget", menu)
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
+
+    def _rebuild_tray(self):
+        if self.tray_icon:
+            self.tray_icon.stop()
+            time.sleep(0.1)
+        self.setup_system_tray()
 
     def _reset_position(self):
         sw = self.winfo_screenwidth()
@@ -572,18 +626,38 @@ class QuotaWidget(ctk.CTk):
         if config_data.get("widget_size", "small") == size_str: return
         config_data["widget_size"] = size_str
         save_config()
-        if self.tray_icon: self.tray_icon.update_menu()
+        self._rebuild_tray()
         self._rebuild_ui()
 
     def _set_theme(self, theme_str):
         if config_data.get("theme", "dark") == theme_str: return
         config_data["theme"] = theme_str
         save_config()
-        if self.tray_icon: self.tray_icon.update_menu()
+        self._rebuild_tray()
         self._rebuild_ui()
 
     def _tray_update_now(self, icon, item):
-        self.cmd_queue.put(self.trigger_update)
+        self.cmd_queue.put(lambda: self.trigger_update(is_manual=True))
+
+    def _tray_force_verify(self, icon, item):
+        self.cmd_queue.put(self._force_verify_action)
+
+    def _force_verify_action(self):
+        clear_cookies()
+        config_data["last_run_date"] = ""
+        save_config()
+        
+        self._failed_attempts = 0
+        self.restore_ui_from_config()
+        self.update()
+        
+        if self._update_job:
+            try: self.after_cancel(self._update_job)
+            except: pass
+        self._update_job = None
+        self.is_updating = False
+        
+        self.after(1000, lambda: self.trigger_update(is_manual=True))
 
     def _tray_help(self, icon, item):
         self.cmd_queue.put(lambda: HelpWindow(self))
@@ -593,10 +667,6 @@ class QuotaWidget(ctk.CTk):
 
     def _tray_clear_cookies(self, icon, item):
         self.cmd_queue.put(self._clear_cookies_action)
-
-    def _tray_captcha(self, icon, item):
-        if self._captcha_btn_visible:
-            self.cmd_queue.put(self._open_captcha_window)
 
     def _tray_exit(self, icon, item):
         if self.tray_icon:
@@ -627,7 +697,10 @@ class QuotaWidget(ctk.CTk):
             self._bind_drag_recursive(child)
 
     def _build_ui(self):
-        for w in self.winfo_children(): w.destroy()
+        for w in self.winfo_children():
+            if not isinstance(w, ctk.CTkToplevel):
+                w.destroy()
+                
         t = T()
         sz = SIZES.get(config_data.get("widget_size", "small"), SIZES["small"])
         
@@ -637,45 +710,87 @@ class QuotaWidget(ctk.CTk):
         self.data_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent", corner_radius=0)
         self.data_frame.pack(fill="x", pady=(5, 5), padx=10)
         
-        self.lbl_current = ctk.CTkLabel(self.data_frame, text="...", font=("Segoe UI", sz["f_main"], "bold"), text_color=t["text_main"])
-        self.lbl_current.pack(side="left", anchor="s")
+        layout_side = "left"
+        days_side = "left"
+        upd_side = "right"
         
-        self.lbl_total = ctk.CTkLabel(self.data_frame, text="GB / --", font=("Segoe UI", sz["f_tot"], "bold"), text_color=t["text_total"])
-        self.lbl_total.pack(side="left", anchor="s", padx=(5,0), pady=(0, 6))
+        self.lbl_current = ctk.CTkLabel(self.data_frame, text="...", font=("Segoe UI", sz["f_main"], "bold"), text_color=t["text_main"])
+        self.lbl_current.pack(side=layout_side, anchor="s")
+        
+        try:
+            t_val = int(float(config_data.get('last_total', 0)))
+            t_str = str(t_val) if t_val > 0 else "..."
+        except:
+            t_str = "..."
+
+        self.lbl_total = ctk.CTkLabel(self.data_frame, text=f"GB / {t_str}", font=("Segoe UI", sz["f_tot"], "bold"), text_color=t["text_total"])
+        self.lbl_total.pack(side=layout_side, anchor="s", padx=(5,5), pady=(0, 6))
         
         self.progress = ctk.CTkProgressBar(self.main_frame, height=8, corner_radius=4, fg_color=t["bar_track"], progress_color=t["bar_green"])
-        self.progress.set(0)
+        
+        try:
+            c_f = float(config_data.get('last_current', 0))
+            t_f = float(config_data.get('last_total', 1))
+            pct = c_f / t_f if t_f > 0 else 0
+        except:
+            pct = 0
+            
+        self.progress.set(min(max(pct, 0.0), 1.0))
+        color = t["bar_green"] if pct > 0.5 else (t["bar_yellow"] if pct > 0.2 else t["bar_red"])
+        self.progress.configure(progress_color=color)
         self.progress.pack(fill="x", padx=10)
         
         days_row = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         days_row.pack(fill="x", pady=(8,0), padx=10)
+        
+        days_val = config_data.get('last_days', '')
+        if days_val.lstrip('-').isdigit():
+            days_txt = f"{days_val} Days Remaining"
+        else:
+            days_txt = days_val
+            
+        self.lbl_days = ctk.CTkLabel(days_row, text=days_txt, font=("Segoe UI", sz["f_days"], "bold"), text_color=t["text_days"])
+        self.lbl_days.pack(side=days_side, anchor="w")
 
-        self.lbl_days = ctk.CTkLabel(days_row, text="-- Days Remaining", font=("Segoe UI", sz["f_days"], "bold"), text_color=t["text_days"])
-        self.lbl_days.pack(side="left", anchor="w")
-
-        self.lbl_update = ctk.CTkLabel(days_row, text="", font=("Segoe UI", sz["f_upd"]), text_color=t["text_total"])
-        self.lbl_update.pack(side="right", anchor="e")
+        upd_time = config_data.get('last_update_time', '')
+        upd_text = f"Last update {upd_time}" if upd_time else ""
+        self.lbl_update = ctk.CTkLabel(days_row, text=upd_text, font=("Segoe UI", sz["f_upd"]), text_color=t["text_total"])
+        self.lbl_update.pack(side=upd_side, anchor="e")
 
         self._bind_drag_recursive(self)
+        
+        self.restore_ui_from_config()
 
     def _rebuild_ui(self):
         sz = SIZES.get(config_data.get("widget_size", "small"), SIZES["small"])
         self.w = sz["w"]
         self.h = sz["h"]
-        x = config_data.get("window_x", 100)
-        y = config_data.get("window_y", 100)
-        self.geometry(f"{self.w}x{self.h}+{x}+{y}")
+        try:
+            safe_x = int(float(config_data.get("window_x", 100)))
+            safe_y = int(float(config_data.get("window_y", 100)))
+        except:
+            safe_x, safe_y = 100, 100
+
+        self.geometry(f"{self.w}x{self.h}+{safe_x}+{safe_y}")
         ctk.set_appearance_mode("Dark" if config_data.get("theme","dark") == "dark" else "Light")
         self._build_ui()
-        if self._last_data:
-            d = self._last_data
-            self.update_ui_safe(d["current"], d["total"], d["days"])
+
+    def restore_ui_from_config(self):
+        c = self._last_data.get("current", 0.0) if self._last_data else config_data.get("last_current", 0.0)
+        t = self._last_data.get("total", 0.0) if self._last_data else config_data.get("last_total", 0.0)
+        d = self._last_data.get("days", "") if self._last_data else config_data.get("last_days", "")
+        u = config_data.get("last_update_time", "")
+        
+        self.update_ui_safe(c, t, d, upd_time=u, is_restore=True)
 
     def _clear_cookies_action(self):
         clear_cookies()
-        self.lbl_days.configure(text="Cookies cleared!", text_color=T()["text_warn"])
+        config_data["last_run_date"] = ""
+        save_config()
+        self._failed_attempts = 0
+        self.restore_ui_from_config()
         self.update()
-        self.after(2000, lambda: self.trigger_update() if not self.is_updating else None)
+        self.after(1000, lambda: self.trigger_update(is_manual=True) if not self.is_updating else None)
 
     def _prompt_wrong_password(self):
         win = SetupWindow(self, self._on_setup_done)
@@ -684,22 +799,29 @@ class QuotaWidget(ctk.CTk):
             win.e_pwd.delete(0, "end")
         ))
 
-    def _on_setup_done(self):
-        x = config_data.get("window_x", 100)
-        y = config_data.get("window_y", 100)
-        self.geometry(f"{self.w}x{self.h}+{x}+{y}")
+    def _on_setup_done(self, credentials_changed=True):
+        try:
+            safe_x = int(float(config_data.get("window_x", 100)))
+            safe_y = int(float(config_data.get("window_y", 100)))
+        except:
+            safe_x, safe_y = 100, 100
+        self.geometry(f"{self.w}x{self.h}+{safe_x}+{safe_y}")
         
+        self._rebuild_tray()
+        self._rebuild_ui()
         self.deiconify()
         self.lift()
         self.after(200, self._apply_desktop_style)
         
         self.after(1200, lambda: setattr(self, '_is_ready', True))
 
-        if self._update_job:
-            try: self.after_cancel(self._update_job)
-            except: pass
-        self._update_job = None
-        self.trigger_update()
+        if credentials_changed:
+            self._failed_attempts = 0
+            if self._update_job:
+                try: self.after_cancel(self._update_job)
+                except: pass
+            self._update_job = None
+            self.trigger_update(is_manual=True)
 
     def _apply_desktop_style(self):
         try:
@@ -733,18 +855,6 @@ class QuotaWidget(ctk.CTk):
         except Exception:
             pass
 
-    def _show_captcha_btn(self):
-        self._captcha_btn_visible = True
-        if self.tray_icon: self.tray_icon.update_menu()
-        try:
-            self.lbl_days.configure(text="Click Tray Icon -> Solve CAPTCHA", text_color=T()["text_warn"])
-            self.update()
-        except: pass
-
-    def _hide_captcha_btn(self):
-        self._captcha_btn_visible = False
-        if self.tray_icon: self.tray_icon.update_menu()
-
     def _open_captcha_window(self):
         driver = self._pending_captcha_driver
         done   = self._pending_captcha_done
@@ -773,14 +883,14 @@ class QuotaWidget(ctk.CTk):
 
         CaptchaWindow(self, captcha_image=img, on_submit=on_submit, on_refresh=on_refresh)
 
-    def _notify_and_solve_captcha(self, driver):
-        if HAS_WINOTIFY:
+    def _notify_and_solve_captcha(self, driver, auto_popup=False):
+        if HAS_WINOTIFY and auto_popup:
             try:
                 def _toast():
                     t = Notification(
                         app_id="WE Quota Widget",
                         title="WE Widget - CAPTCHA Required",
-                        msg="Right-click the widget icon in the system tray and select 'Solve CAPTCHA' to verify.",
+                        msg="Please solve the CAPTCHA to monitor your quota.",
                         duration="long",
                     )
                     t.set_audio(audio.Default, loop=False)
@@ -794,25 +904,17 @@ class QuotaWidget(ctk.CTk):
             self._pending_captcha_done   = done
             self._pending_captcha_code   = None
             
-            self.cmd_queue.put(self._show_captcha_btn)
-            
-            # Smart Auto-Popup logic for expired CAPTCHAs
-            # If attempt > 0, it means the user submitted an expired code and is actively trying to solve it.
-            if attempt > 0:
+            if auto_popup or attempt > 0:
                 self.cmd_queue.put(self._open_captcha_window)
 
             waited = 0
             while not done.wait(timeout=5):
                 waited += 5
                 if waited >= 1800:
-                    self.cmd_queue.put(self._hide_captcha_btn)
                     return False
                 try: driver.execute_script("return 1;")
-                except:
-                    self.cmd_queue.put(self._hide_captcha_btn)
-                    return False
+                except: return False
 
-            self.cmd_queue.put(self._hide_captcha_btn)
             code = self._pending_captcha_code
             if not code: return False
 
@@ -842,32 +944,41 @@ class QuotaWidget(ctk.CTk):
         return False
 
     def start_auto_update(self):
-        self.trigger_update()
+        self.trigger_update(is_manual=False)
 
-    def trigger_update(self):
+    def trigger_update(self, is_manual=False):
         if self.is_updating: return
         self.is_updating = True
-        self.lbl_days.configure(text="Updating...", text_color=T()["text_warn"])
-        try: self.update() 
-        except: pass
-        threading.Thread(target=self.run_scraper, daemon=True).start()
+        
+        if is_manual:
+            self._failed_attempts = 0  
+            
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        allow_captcha = is_manual or (config_data.get("last_run_date", "") != today_str)
+        
+        self.restore_ui_from_config()
 
-    def run_scraper(self):
+        threading.Thread(target=self.run_scraper, args=(allow_captcha, is_manual), daemon=True).start()
+
+    def run_scraper(self, allow_captcha=False, is_manual=False):
         driver  = None
         success = False
-        is_no_internet = False
         try:
             driver = make_driver(images=True)
             wait   = WebDriverWait(driver, 30) 
             
             driver.get("https://my.te.eg/echannel/#/login")
             cookies_loaded = load_cookies(driver)
+            
             if cookies_loaded:
-                driver.refresh()
-                time.sleep(3)
+                try:
+                    driver.refresh()
+                    time.sleep(3)
+                except:
+                    pass
                 
             try:
-                driver.find_element(By.XPATH, "//span[contains(@style,'font-size: 2.1875rem')]")
+                driver.find_element(By.XPATH, "//span[contains(@style,'font-size: 2.') or contains(@style,'font-size: 3.')]")
                 already_in = True
             except: 
                 already_in = False
@@ -880,30 +991,48 @@ class QuotaWidget(ctk.CTk):
                     svc_input = wait.until(EC.visibility_of_element_located(
                         (By.XPATH, "//input[@id='login_loginid_input_01' or @formcontrolname='msisdn']")
                     ))
-                    svc_input.clear()
+                    driver.execute_script("arguments[0].value = '';", svc_input)
                     svc_input.send_keys(config_data["service_number"] + Keys.TAB)
                     time.sleep(0.5)
-                    driver.switch_to.active_element.send_keys("Internet" + Keys.ENTER)
+                    
+                    dropdown = driver.switch_to.active_element
+                    for _ in range(4):
+                        dropdown.send_keys(Keys.UP)
+                        time.sleep(0.05)
+                        
+                    for _ in range(2):
+                        dropdown.send_keys(Keys.DOWN)
+                        time.sleep(0.1)
+                        
+                    dropdown.send_keys(Keys.ENTER)
                     time.sleep(0.5)
                     
                     pwd_input = driver.find_element(By.XPATH, "//input[@type='password']")
-                    pwd_input.clear()
-                    pwd_input.send_keys(decode_pw(config_data["password"]) + Keys.ENTER)
-                    time.sleep(3)
+                    driver.execute_script("arguments[0].value = '';", pwd_input)
+                    pwd_input.send_keys(decode_pw(config_data["password"]))
+                    time.sleep(0.5)
+                    pwd_input.send_keys(Keys.ENTER)
+                    
+                    try:
+                        login_btn = driver.find_element(By.XPATH, "//button[.//span[contains(text(), 'Login') or contains(text(), 'دخول')] or @id='login_login_btn_01']")
+                        driver.execute_script("arguments[0].click();", login_btn)
+                    except: pass
+                    
+                    time.sleep(4)
 
                     try:
-                        body = driver.find_element(By.TAG_NAME, "body").text
-                        if "maximum number of attempts" in body or "try again after" in body:
-                            self.cmd_queue.put(lambda: self.lbl_days.configure(text="Blocked: Retry in 1h", text_color=T()["text_err"]))
+                        src = driver.page_source.lower()
+                        if "maximum number of attempts" in src or "try again after" in src:
                             raise Exception("RATE_LIMITED")
-                        if ("Invalid" in body or "incorrect" in body.lower() or "wrong" in body.lower() or "invalid password" in body.lower()):
-                            self.cmd_queue.put(self._prompt_wrong_password)
+                        if ("invalid" in src or "incorrect" in src or "wrong" in src or "start with 0" in src or "begin with 01" in src):
                             raise Exception("WRONG_PASSWORD")
                     except Exception as _chk:
                         if "RATE_LIMITED" in str(_chk) or "WRONG_PASSWORD" in str(_chk):
                             raise
 
                 except Exception as e:
+                    if "WRONG_PASSWORD" in str(e) or "RATE_LIMITED" in str(e):
+                        raise
                     pass
 
                 try:
@@ -913,8 +1042,11 @@ class QuotaWidget(ctk.CTk):
                     captcha_present = False
 
                 if captcha_present:
+                    if not allow_captcha:
+                        raise Exception("CAPTCHA_DETECTED_BACKGROUND")
+                        
                     self._captcha_driver = driver
-                    solved = self._notify_and_solve_captcha(driver)
+                    solved = self._notify_and_solve_captcha(driver, auto_popup=True)
                     driver = getattr(self, "_captcha_driver", driver)
                     wait   = WebDriverWait(driver, 30) 
                     
@@ -924,25 +1056,58 @@ class QuotaWidget(ctk.CTk):
                     time.sleep(4) 
                     
                     try:
-                        wait.until(EC.visibility_of_element_located((By.XPATH, "//span[contains(@style,'font-size: 2.1875rem')]")))
+                        wait.until(EC.visibility_of_element_located((By.XPATH, "//span[contains(@style,'font-size: 2.') or contains(@style,'font-size: 3.')]")))
                     except:
                         driver.get("https://my.te.eg/echannel/#/login")
                         time.sleep(2)
                         svc_input = wait.until(EC.visibility_of_element_located((By.XPATH, "//input[@id='login_loginid_input_01' or @formcontrolname='msisdn']")))
-                        svc_input.clear()
+                        driver.execute_script("arguments[0].value = '';", svc_input)
                         svc_input.send_keys(config_data["service_number"] + Keys.TAB)
                         time.sleep(0.5)
-                        driver.switch_to.active_element.send_keys("Internet" + Keys.ENTER)
+                        
+                        dropdown = driver.switch_to.active_element
+                        for _ in range(4):
+                            dropdown.send_keys(Keys.UP)
+                            time.sleep(0.05)
+                            
+                        for _ in range(2):
+                            dropdown.send_keys(Keys.DOWN)
+                            time.sleep(0.1)
+                            
+                        dropdown.send_keys(Keys.ENTER)
                         time.sleep(0.5)
+                        
                         pwd_input = driver.find_element(By.XPATH, "//input[@type='password']")
-                        pwd_input.clear()
+                        driver.execute_script("arguments[0].value = '';", pwd_input)
                         pwd_input.send_keys(decode_pw(config_data["password"]) + Keys.ENTER)
+                        
+                        try:
+                            login_btn = driver.find_element(By.XPATH, "//button[.//span[contains(text(), 'Login') or contains(text(), 'دخول')] or @id='login_login_btn_01']")
+                            driver.execute_script("arguments[0].click();", login_btn)
+                        except: pass
+                        
                         time.sleep(4)
+                        
+                        try:
+                            src = driver.page_source.lower()
+                            if ("invalid" in src or "incorrect" in src or "wrong" in src or "start with 0" in src or "begin with 01" in src):
+                                raise Exception("WRONG_PASSWORD")
+                        except Exception as _chk:
+                            if "WRONG_PASSWORD" in str(_chk): raise
                         
                 save_cookies(driver)
 
-            usage_elem = wait.until(EC.visibility_of_element_located((By.XPATH, "//span[contains(@style, 'font-size: 2.1875rem')]")))
-            current_quota = float(usage_elem.text)
+            usage_elements = wait.until(EC.presence_of_all_elements_located((By.XPATH, "//*[contains(@style, 'font-size: 2.') or contains(@style, 'font-size: 3.') or contains(@style, 'font-size: 4.')]")))
+            valid_usage = None
+            for el in usage_elements:
+                text = el.text.strip().replace(',', '')
+                if re.search(r"^\d+\.\d+$", text) or re.search(r"^\d+$", text):
+                    valid_usage = float(text)
+                    break
+            
+            if valid_usage is None:
+                raise Exception("Usage parsing failed")
+            current_quota = valid_usage
 
             total = 0.0
             try:
@@ -953,10 +1118,10 @@ class QuotaWidget(ctk.CTk):
             if total == 0 and config_data.get("total_quota"):
                 total = float(config_data["total_quota"])
 
-            days_val = "??"
+            days_val = config_data.get("last_days", "")
             try:
                 wait_slow = WebDriverWait(driver, 30)
-                more_btn = wait_slow.until(EC.element_to_be_clickable((By.XPATH, "//span[contains(text(),'More Details')]")))
+                more_btn = wait_slow.until(EC.presence_of_element_located((By.XPATH, "//span[contains(text(),'More Details')]")))
                 driver.execute_script("arguments[0].click();", more_btn)
                 time.sleep(2)
                 d_elm = wait_slow.until(EC.visibility_of_element_located((By.XPATH, "//span[contains(@style,'0.8rem') and contains(text(),'Remaining Days')]")))
@@ -975,21 +1140,26 @@ class QuotaWidget(ctk.CTk):
                     except: pass
 
             if total > 0: config_data["total_quota"] = total
+            
+            now_dt = datetime.now()
+            now_str = now_dt.strftime("%I:%M %p")
+            config_data["last_current"] = current_quota
+            config_data["last_total"] = total
+            config_data["last_days"] = days_val
+            config_data["last_update_time"] = now_str
+            config_data["last_run_date"] = now_dt.strftime("%Y-%m-%d")
             save_config()
 
-            self.cmd_queue.put(lambda: self.update_ui_safe(current_quota, total, days_val))
+            self.cmd_queue.put(lambda: self.update_ui_safe(current_quota, total, days_val, upd_time=now_str))
             success = True
 
         except Exception as e:
-            err_str = str(e)
-            if "ERR_INTERNET_DISCONNECTED" in err_str or "ERR_NAME_NOT_RESOLVED" in err_str:
-                is_no_internet = True
-                self.cmd_queue.put(lambda: self.lbl_days.configure(text="No Internet", text_color=T()["text_err"]))
-            elif "RATE_LIMITED" not in err_str and "WRONG_PASSWORD" not in err_str and "CAPTCHA not solved" not in err_str:
-                tb_str = traceback.format_exc()
-                with open(os.path.join(config_path, "error_log.txt"), "a", encoding="utf-8") as f:
-                    f.write(f"\n--- {datetime.now()} ---\n{tb_str}\n")
-                self.cmd_queue.put(lambda: self.lbl_days.configure(text="Err: check error_log.txt", text_color=T()["text_err"]))
+            tb_str = traceback.format_exc()
+            with open(os.path.join(config_path, "error_log.txt"), "a", encoding="utf-8") as f:
+                f.write(f"\n--- {datetime.now()} ---\n{tb_str}\n")
+            
+            self.cmd_queue.put(self.restore_ui_from_config)
+            
         finally:
             active_driver = getattr(self, "_captcha_driver", None) or driver
             if active_driver:
@@ -1003,48 +1173,85 @@ class QuotaWidget(ctk.CTk):
                 except: pass
             
             if success:
+                try:
+                    debug_img_path = os.path.join(config_path, "debug_error_screen.png")
+                    if os.path.exists(debug_img_path): os.remove(debug_img_path)
+                except: pass
+                
+                self._failed_attempts = 0 # Reset counter on success
                 minutes = config_data.get("update_interval_minutes", 60)
                 interval_ms = minutes * 60 * 1000
                 self._update_job = self.after(interval_ms, self.start_auto_update)
             else:
-                if is_no_internet:
-                    self._update_job = self.after(600000, self.trigger_update) 
+                if not is_manual:
+                    self._failed_attempts += 1
+                    if self._failed_attempts >= 3:
+                        self._failed_attempts = 0 # Reset counter for the 1-hour wait cycle
+                        self._update_job = self.after(3600000, self.start_auto_update) # 1 hour
+                    else:
+                        self._update_job = self.after(300000, self.start_auto_update) # 5 minutes
                 else:
-                    self._update_job = self.after(300000, self.trigger_update) 
+                    self._update_job = self.after(300000, self.start_auto_update) # 5 mins
 
-    def update_ui_safe(self, current, total, days):
+    def update_ui_safe(self, current, total, days, upd_time=None, is_restore=False):
         self._last_data = {"current": current, "total": total, "days": days}
         t = T()
         try:
-            self.lbl_current.configure(text=str(current))
-            self.lbl_total.configure(text=f"GB / {int(total)}" if total else "GB / --")
+            if current in ["...", "--", ""] or current is None:
+                c_str = str(current) if current else "..."
+            else:
+                try: c_str = f"{float(current):g}"
+                except: c_str = str(current)
+            self.lbl_current.configure(text=c_str)
             
-            days_s = str(days)
+            try: t_val = int(float(total))
+            except: t_val = 0
+            t_str = str(t_val) if t_val > 0 else "..."
+            self.lbl_total.configure(text=f"GB / {t_str}")
+            
+            days_s = str(days).replace("--", "")
             if days_s.lstrip('-').isdigit():
                 days_txt = f"{days_s} Days Remaining"
                 self.lbl_days.configure(text=days_txt, text_color=t["text_days"])
             else:
                 self.lbl_days.configure(text=days_s, text_color=t["text_warn"])
                 
-            pct = (current / total) if total > 0 else 0
-            self.progress.set(min(pct, 1.0))
+            try:
+                c_f = float(current)
+                t_f = float(total)
+                pct = (c_f / t_f) if t_f > 0 else 0
+            except:
+                pct = 0
+            self.progress.set(min(max(pct, 0.0), 1.0))
             color = t["bar_green"] if pct > 0.5 else (t["bar_yellow"] if pct > 0.2 else t["bar_red"])
             self.progress.configure(progress_color=color)
             
-            now_str = datetime.now().strftime("%I:%M %p")
-            self.lbl_update.configure(text=f"Last update  {now_str}")
-        except: pass
+            if upd_time:
+                self.lbl_update.configure(text=f"Last update {upd_time}")
+            else:
+                self.lbl_update.configure(text="")
+            
+        except Exception as e:
+            pass
 
-        try:
-            if total > 0 and (current / total) < 0.20 and current > 0:
-                cycle     = config_data.get("renewal_date", "")
-                dismissed = config_data.get("alert_dismissed_cycle", "")
-                if cycle != dismissed:
-                    def mark_ok():
-                        config_data["alert_dismissed_cycle"] = cycle
-                        save_config()
-                    AlertWindow(self, on_ok=mark_ok)
-        except: pass
+        if not is_restore:
+            try:
+                if total > 0:
+                    pct = (current / total)
+                    dismissed = config_data.get("alert_dismissed_cycle", "")
+                    
+                    if pct > 0.20:
+                        if dismissed != "":
+                            config_data["alert_dismissed_cycle"] = ""
+                            save_config()
+                    
+                    elif pct <= 0.20 and current > 0:
+                        if dismissed != "dismissed":
+                            def mark_dismissed():
+                                config_data["alert_dismissed_cycle"] = "dismissed"
+                                save_config()
+                            AlertWindow(self, on_ok=mark_dismissed)
+            except: pass
 
 if __name__ == "__main__":
     app = QuotaWidget()
