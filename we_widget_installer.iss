@@ -1,7 +1,7 @@
-#define MyAppName "WE Quota Widget"
-#define MyAppVersion "0.9.6-beta"
-#define MyAppPublisher "KatiloWorks"
-#define MyAppExeName "WE Widget.exe"
+#define MyAppName "We Quota Widget"
+#define MyAppVersion "0.9.7-beta.10"
+#define MyAppPublisher "Katilo"
+#define MyAppExeName "we_quota_widget.exe"
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
@@ -13,7 +13,7 @@ DefaultDirName={localappdata}\WE Widget
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=.
-OutputBaseFilename=WE_Widget_v0.9.6-beta
+OutputBaseFilename=WE_Widget_v0.9.7-beta.10
 SetupIconFile=app_icon.ico
 Compression=lzma
 SolidCompression=yes
@@ -30,7 +30,7 @@ Name: "desktopicon";     Description: "Create a desktop shortcut";              
 
 [Files]
 ; Pointing to the default PyInstaller output and renaming it to match MyAppExeName
-Source: "dist\we_widget.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
+Source: "dist\we_quota_widget.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
 Source: "app_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
